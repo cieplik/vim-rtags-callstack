@@ -1,5 +1,5 @@
-" TODO Keep locations in loclist, not buffer
 " TODO Highligh up the stack, if unique
+" TODO Deep stacks are not fully colored
 
 if !exists("g:numSigns")
     for idx in range(0, 9)
@@ -23,6 +23,14 @@ endfunction
 
 function! rtags#Highlight(...)
     execute "sign unplace * buffer=" . string(bufnr("%"))
+    if exists("b:prevMatch")
+        call matchdelete(b:prevMatch)
+        unlet b:prevMatch
+    endif
+
+    if !rtags#HasCallstack() || len(rtags#GetLocations()) == 0
+        return
+    endif
 
     function! PlaceStackDepth(line, depth)
         execute "sign place 43 line=" . string(a:line) . " name=stackdepth"
@@ -56,9 +64,6 @@ function! rtags#Highlight(...)
         endif
     endfor
 
-    if exists("b:prevMatch")
-        call matchdelete(b:prevMatch)
-    endif
     let b:prevMatch = matchaddpos("Error", lines)
 endfunction
 
@@ -95,18 +100,42 @@ function! rtags#AddParents(result, locations)
 endfunction
 
 function! rtags#GetLoclist()
-    return getloclist(0)
+    return getloclist(0, {'items': 1})['items']
 endfunction
 
-function! rtags#GetLocations()
-    if exists('b:locations') == 0
-        let b:locations = []
-    endif
-    return b:locations
+function! rtags#SetLoclist(items)
+    call setloclist(0, [], 'r', {'items': a:items})
+endfunction
+
+function! rtags#GetContext()
+    return getloclist(0, {'context': 1}).context
+endfunction
+
+function! rtags#SetContext(context)
+    call setloclist(0, [], 'r', {'context': a:context})
+endfunction
+
+function! rtags#SetInContext(key, value)
+    let context = rtags#GetContext()
+    let context[a:key] = a:value
 endfunction
 
 function! rtags#SetLocations(locations)
-    let b:locations = a:locations
+    call rtags#SetInContext('locations', a:locations)
+endfunction
+
+function! rtags#GetLocations()
+    return rtags#GetContext().locations
+endfunction
+
+function! rtags#WinSaveView()
+    if rtags#HasCallstack()
+        call rtags#SetInContext('winview', winsaveview())
+    endif
+endfunction
+
+function! rtags#WinRestView()
+    call winrestview(rtags#GetContext().winview)
 endfunction
 
 function! rtags#AddReferences(results, locations)
@@ -114,11 +143,16 @@ function! rtags#AddReferences(results, locations)
     call rtags#ShortenCallsite(results)
     call rtags#UpdateLocations(results, a:locations)
     let oldpos = winsaveview()
-    call setloclist(0, extend(rtags#GetLoclist(), results, line(".")))
+    call rtags#SetLoclist(extend(rtags#GetLoclist(), results, line(".")))
+    call rtags#SetWinHeight()
     call winrestview(oldpos)
 endfunction
 
 function! s:ExpandReferences()
+    if !rtags#HasCallstack()
+        return
+    endif
+
     let entry = rtags#GetLoclist()[line(".") - 1]
 
     let location = fnamemodify(bufname(entry.bufnr), ":p") . ':' . entry.lnum . ':' . entry.col
@@ -132,23 +166,69 @@ function! rtags#SetupMappings(results, currentLocation)
     if g:rtagsUseLocationList == 1
         let res = rtags#ParseResults(a:results)
         call rtags#SetLocations([])
+        if len(res) == 0
+            echo "No callsites found"
+            return
+        endif
         call rtags#ShortenCallsite(res)
         call rtags#UpdateLocations(res, {"callee": a:currentLocation, "depth": 0})
-        nnoremap <buffer> o :call <SID>ExpandReferences()<CR>
-        au CursorMoved <buffer> call rtags#Highlight()
     endif
+endfunction
+
+function! rtags#SetWinHeight()
+    let height = len(rtags#GetLoclist())
+    if height == 0
+        return
+    endif
+
+    let winHeight = min([g:rtagsMaxSearchResultWindowHeight, height])
+    exe 'lopen ' . winHeight | set nowrap
 endfunction
 
 function! rtags#DisplayCallTree(results)
     let locations = rtags#ParseResults(a:results)
     call rtags#ShortenCallsite(locations)
-    call rtags#DisplayLocations(locations)
+
+    if len(locations) > 0
+        call rtags#SetLoclist(locations)
+        call rtags#SetWinHeight()
+    endif
+
     return a:results
 endfunction
 
+function! rtags#HasCallstack()
+    let context = rtags#GetContext()
+    return type(context) == type({}) && has_key(context, 'rtagsCallstack')
+endfunction
+
 function! rtags#FindRefsCallTree()
+    let context = rtags#GetContext()
+    if !rtags#HasCallstack()
+    " type(context) != type({}) || !has_key(context, 'rtagsCallstack')
+        call rtags#SetContext({'rtagsCallstack': 1, 'locations': []})
+    endif
+
     let args = { '-r': rtags#getCurrentLocation(), '--containing-function': ''}
 
     call rtags#SetLocations([])
     call rtags#ExecuteThen(args, [function('rtags#DisplayCallTree'), [function('rtags#SetupMappings'), rtags#getCurrentLocation()]])
 endfunction
+
+function! rtags#SetupLocationList()
+    if !rtags#HasCallstack() || exists('b:rtagsLoclistInitialized')
+        return
+    endif
+    let b:rtagsLoclistInitialized = 1
+
+    if len(rtags#GetLocations()) != 0
+        call rtags#WinRestView()
+        call rtags#Highlight()
+    endif
+
+    au CursorMoved <buffer> call rtags#Highlight()
+    au WinLeave <buffer> call rtags#WinSaveView()
+    nnoremap <buffer> o :call <SID>ExpandReferences()<CR>
+endfunction
+
+au FileType qf call rtags#SetupLocationList()

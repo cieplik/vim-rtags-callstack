@@ -52,7 +52,7 @@ function! rtags#Highlight(...)
     call PlaceSameDepth(depth, locations, range(line('.') - 1, len(locations) - 1))
     call PlaceSameDepth(depth, locations, range(line('.') - 1, 0, -1))
 
-    echo locations[line(".") - 1].caller
+    echo substitute(locations[line(".") - 1].caller, '\v\(.*$', '', '')
 
     let lines = [line(".")]
 

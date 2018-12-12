@@ -151,7 +151,7 @@ function! rtags#AddReferences(results, locations)
     call rtags#UpdateLocations(results, a:locations)
     let oldpos = winsaveview()
     call rtags#SetLoclist(extend(rtags#GetLoclist(), results, line(".")))
-    call rtags#SetWinHeight()
+    call rtags#UpdateLocationWindowHeight()
     call winrestview(oldpos)
 endfunction
 
@@ -182,14 +182,18 @@ function! rtags#SetupMappings(results, currentLocation)
     endif
 endfunction
 
-function! rtags#SetWinHeight()
-    let height = len(rtags#GetLoclist())
-    if height == 0
-        return
-    endif
+function! rtags#UpdateLocationWindowHeight()
+    let height = min([
+      \ g:rtagsMaxSearchResultWindowHeight,
+      \ len(rtags#GetLoclist())])
 
-    let winHeight = min([g:rtagsMaxSearchResultWindowHeight, height])
-    exe 'lopen ' . winHeight | set nowrap
+    if height != 0
+        if exists('b:rtagsLoclistInitialized')
+            let height = max([height, winheight(0)])
+        endif
+
+        execute 'lopen ' . height | set nowrap
+    endif
 endfunction
 
 function! rtags#DisplayCallTree(results)
@@ -198,7 +202,7 @@ function! rtags#DisplayCallTree(results)
 
     if len(locations) > 0
         call rtags#SetLoclist(locations)
-        call rtags#SetWinHeight()
+        call rtags#UpdateLocationWindowHeight()
     endif
 
     return a:results

@@ -1,5 +1,4 @@
 " TODO Highligh up the stack, if unique
-" TODO Deep stacks are not fully colored
 
 if !exists("g:numSigns")
     for idx in range(0, 9)
@@ -23,12 +22,16 @@ endfunction
 
 function! rtags#Highlight(...)
     execute "sign unplace * buffer=" . string(bufnr("%"))
-    if exists("b:prevMatch")
-        call matchdelete(b:prevMatch)
-        unlet b:prevMatch
-    endif
+
+    function! MatchDelete()
+        if exists("b:prevMatch")
+            call matchdelete(b:prevMatch)
+            unlet b:prevMatch
+        endif
+    endfunction
 
     if !rtags#HasCallstack() || len(rtags#GetLocations()) == 0
+        call MatchDelete()
         return
     endif
 
@@ -64,7 +67,11 @@ function! rtags#Highlight(...)
         endif
     endfor
 
-    let b:prevMatch = matchaddpos("Error", lines)
+    let currMatch = matchadd(
+      \ 'Error',
+      \ '\v(' . join(map(lines, '"%" . v:val . "l"'), '|') . ')\|[0-9]+ col [0-9]+ r\| \zs.*$')
+    call MatchDelete()
+    let b:prevMatch = currMatch
 endfunction
 
 function! rtags#UpdateLocations(results, locationPrototype)
